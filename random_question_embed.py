@@ -1,8 +1,25 @@
 import tkinter as tk
 import random
 import os
+import ctypes
 import threading
+import time
 
+# ========== Windows 强制置顶 ==========
+user32 = ctypes.WinDLL('user32')
+HWND_TOPMOST = -1
+SWP_NOMOVE = 0x0002
+SWP_NOSIZE = 0x0001
+SWP_SHOWWINDOW = 0x0040
+
+def force_topmost(hwnd):
+    user32.SetWindowPos(
+        hwnd, HWND_TOPMOST,
+        0, 0, 0, 0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW
+    )
+
+# ========== 主程序 ==========
 class App:
     def __init__(self, root):
         self.root = root
@@ -10,22 +27,26 @@ class App:
         self.root.attributes('-fullscreen', True)
         self.root.configure(bg="#1a1a2e")
 
+        # 强制置顶（Windows API）
+        hwnd = ctypes.c_void_p(self.root.winfo_id())
+        force_topmost(hwnd)
+
         # 透明度控制
         self.alpha_normal = 1.0
         self.alpha_dim = 0.5
         self.idle_seconds = 0
-        self.idle_limit = 20  # 20秒无操作变半透明
+        self.idle_limit = 20  # 10秒无操作变半透明
         self.idle_timer_running = False
 
         # 自动停止参数
-        self.auto_stop_ms = 3000
-        self.slow_start_ms = 2000
+        self.auto_stop_ms = 3000   # 总滚动3秒
+        self.slow_start_ms = 2000  # 2秒后减速
         self.timer = None
         self.is_rolling = False
         self.last_picked = None
         self.start_time = 0
 
-        # 班级名单
+        # 读取班级名单
         self.classes = {}
         self.class_keys = []
         for cls in ["426", "427", "428"]:
@@ -104,19 +125,22 @@ class App:
     def reset_idle(self, event=None):
         self.idle_seconds = 0
         self.root.attributes('-alpha', self.alpha_normal)
+        # 唤醒时刷新置顶
+        hwnd = ctypes.c_void_p(self.root.winfo_id())
+        force_topmost(hwnd)
 
     def start_idle_timer(self):
         def tick():
             while True:
                 self.root.after(1000, self._tick_idle)
-                import time
                 time.sleep(1)
-
         t = threading.Thread(target=tick, daemon=True)
         t.start()
 
     def _tick_idle(self):
         self.idle_seconds += 1
+        hwnd = ctypes.c_void_p(self.root.winfo_id())
+        force_topmost(hwnd)  # 持续保置顶
         if self.idle_seconds >= self.idle_limit:
             self.root.attributes('-alpha', self.alpha_dim)
 
@@ -199,6 +223,10 @@ class App:
         self.label_name.config(text="已换班", fg="gold")
         self.update_display()
         self.root.update_idletasks()
+
+        # 换班后刷新置顶
+        hwnd = ctypes.c_void_p(self.root.winfo_id())
+        force_topmost(hwnd)
 
     def reset(self):
         self.remaining_names = self.original_names.copy()
