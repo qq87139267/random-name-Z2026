@@ -1,243 +1,441 @@
-<!DOCTYPE html>
-<html lang="zh-CN">
-<head>
-<meta charset="UTF-8">
-<title>“ 💪 →下一位～～就係你～～～👉↗”</title>
-<style>
-/* ========== 全局 ========== */
-* { margin: 0; padding: 0; box-sizing: border-box; }
+# -*- coding: utf-8 -*-
+"""
+随机点名 · 桌面软件版（Python + tkinter）
+功能：自由管理班级 / 粘贴名单 / 行草字体 / 万花筒滚动 /
+      金色3D定格 / 3秒自动停(2快+1减速) / 20秒70%透明 / 点击名字开始
+数据保存在同目录 rollcall_data.json，关掉再开还在。
+"""
+import os
+import json
+import random
+import time
+import threading
+import tkinter as tk
+from tkinter import font as tkfont
 
-body {
-  background: #1a1a2e;
-  color: white;
-  font-family: "Microsoft YaHei", sans-serif;
-  height: 100vh;
-  overflow: hidden;
-  user-select: none;
-  transition: opacity 0.8s;
-}
+# ========== Windows 强制置顶 ==========
+try:
+    import ctypes
+    user32 = ctypes.WinDLL('user32')
+    HWND_TOPMOST = -1
+    SWP_NOMOVE = 0x0002
+    SWP_NOSIZE = 0x0001
+    SWP_SHOWWINDOW = 0x0040
 
-body.dim { opacity: 0.3; }
+    def force_topmost(hwnd):
+        user32.SetWindowPos(
+            hwnd, HWND_TOPMOST, 0, 0, 0, 0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW
+        )
+except Exception:
+    def force_topmost(hwnd):
+        pass
 
-/* ========== 顶部班级 ========== */
-.header {
-  text-align: center;
-  padding: 20px 0 10px;
-  font-size: 42px;
-  font-weight: bold;
-  color: #00d4ff;
-  letter-spacing: 4px;
-}
 
-/* ========== 名字区域 ========== */
-.center {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  height: 60vh;
-}
+DATA_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                         "rollcall_data.json")
 
-.name {
-  font-family:
-    "Xingkai SC", "STXingkai", "Xingkai TC",
-    "KaiTi", "KaiTi_GB2312", "FZXingKai-Medium",
-    "LiSu", "Microsoft YaHei", serif;
-  font-size: 140px;
-  font-weight: bold;
-  cursor: pointer;
-  padding: 20px 40px;
-  border-radius: 20px;
-  transition: transform 0.08s;
-  text-align: center;
+# 行草字体优先级（Windows 自带华文行楷 STXingkai，无需额外安装）
+CALLIGRAPHY = ["STXingkai", "Xingkai SC", "KaiTi", "LiSu", "Microsoft YaHei"]
 
-  /* 默认金色 */
-  background: linear-gradient(135deg, #FFD700 0%, #FFA500 50%, #FF8C00 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  filter:
-    drop-shadow(0 2px 0 #B8860B)
-    drop-shadow(0 4px 0 #8B6508)
-    drop-shadow(0 6px 8px rgba(0,0,0,0.6));
-}
+# 万花筒 12 色
+COLORS = [
+    "#ff4081", "#ffeb3b", "#00e5ff", "#76ff03",
+    "#e040fb", "#ff6e40", "#18ffff", "#ffff00",
+    "#f50057", "#00ffa0", "#651fff", "#ffd740",
+]
 
-.name:active { transform: scale(0.97); }
 
-/* ========== 底部信息 ========== */
-.footer {
-  position: absolute;
-  bottom: 30px;
-  width: 100%;
-  text-align: center;
-  font-size: 26px;
-  color: #ccc;
-}
+class App:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("💪 →下一位～～就係你～～～👉↗")
+        self.root.attributes('-fullscreen', True)
+        self.root.configure(bg="#1a1a2e")
 
-/* ========== 按钮栏 ========== */
-.buttons {
-  position: absolute;
-  bottom: 80px;
-  width: 100%;
-  text-align: center;
-}
+        hwnd = ctypes.c_void_p(self.root.winfo_id()) if 'ctypes' in globals() else None
+        try:
+            force_topmost(hwnd)
+        except Exception:
+            self.root.wm_attributes('-topmost', 1)
 
-.buttons button {
-  font-size: 22px;
-  padding: 12px 30px;
-  margin: 0 10px;
-  border: none;
-  border-radius: 8px;
-  cursor: pointer;
-  color: white;
-}
+        # 透明度：70% 透明 = 保留 0.3
+        self.alpha_normal = 1.0
+        self.alpha_dim = 0.3
+        self.idle_seconds = 0
+        self.idle_limit = 20
 
-.btn-start { background: #2196f3; }
-.btn-reset { background: #ff9800; }
-.btn-switch { background: #4caf50; }
-</style>
-</head>
+        # 自动停止参数
+        self.auto_stop_ms = 3000
+        self.slow_start_ms = 2000
+        self.timer = None
+        self.is_rolling = False
+        self.last_picked = None
+        self.start_time = 0
+        self.color_idx = 0
 
-<body>
-<div class="header" id="classLabel">426班</div>
+        # 数据：{ "426班": ["张三", ...], ... }
+        self.classes = self.load_data()
+        if not self.classes:
+            self.classes = {"426班": ["蔡家乐", "吴莹莹", "廖梓良"]}
+        self.class_keys = list(self.classes.keys())
+        self.current_idx = 0
+        self.current_class = self.class_keys[self.current_idx]
+        self.original_names = self.classes[self.current_class][:]
+        self.remaining_names = self.original_names[:]
 
-<div class="center">
-  <div class="name" id="nameLabel">点击开始</div>
-</div>
+        self.build_ui()
+        self.bind_events()
+        self.update_display()
+        self.start_idle_timer()
 
-<div class="buttons">
-  <button class="btn-start" onclick="toggleRoll()">开始 / 停止</button>
-  <button class="btn-reset" onclick="resetClass()">重置</button>
-  <button class="btn-switch" onclick="switchClass()">换班（Esc）</button>
-</div>
+    # -------- 数据持久化 --------
+    def load_data(self):
+        try:
+            if os.path.exists(DATA_FILE):
+                with open(DATA_FILE, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception:
+            pass
+        return {}
 
-<div class="footer" id="remainLabel">剩余 0/0</div>
+    def save_data(self):
+        try:
+            with open(DATA_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.classes, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
 
-<script>
-/* ========== 名单配置（直接改这里） ========== */
-const CLASSES = {
-  "426班": [
-    "蔡家乐","吴莹莹","廖梓良","张三","李四","王五"
-  ],
-  "428班": [
-    "赵六","孙七","周八","吴九","郑十"
-  ]
-};
+    # -------- 界面 --------
+    def build_ui(self):
+        # 顶部：班级选择 + 管理按钮
+        top = tk.Frame(self.root, bg="#1a1a2e")
+        top.pack(pady=(18, 6), fill=tk.X)
 
-/* ========== 状态 ========== */
-let classKeys = Object.keys(CLASSES);
-let currentIdx = 0;
-let currentClass = classKeys[currentIdx];
-let originalNames = [...CLASSES[currentClass]];
-let remainingNames = [...originalNames];
+        self.label_class = tk.Label(
+            top, text="", font=("Microsoft YaHei", 36, "bold"),
+            fg="#00d4ff", bg="#1a1a2e"
+        )
+        self.label_class.pack(side=tk.LEFT, padx=20)
 
-let isRolling = false;
-let timer = null;
-let startTime = 0;
-let idleTimer = null;
-let idleSeconds = 0;
-const IDLE_LIMIT = 20;
+        tk.Button(top, text="＋ 新建班级", command=self.add_class,
+                  font=("Microsoft YaHei", 14), bg="#4caf50", fg="white",
+                  padx=8).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="－ 删除当前班", command=self.remove_class,
+                  font=("Microsoft YaHei", 14), bg="#f44336", fg="white",
+                  padx=8).pack(side=tk.LEFT, padx=4)
+        tk.Button(top, text="✎ 编辑名单", command=self.edit_names,
+                  font=("Microsoft YaHei", 14), bg="#ff9800", fg="white",
+                  padx=8).pack(side=tk.LEFT, padx=4)
 
-/* ========== DOM ========== */
-const nameLabel = document.getElementById("nameLabel");
-const classLabel = document.getElementById("classLabel");
-const remainLabel = document.getElementById("remainLabel");
+        # 名字区域（行草字体）
+        center = tk.Frame(self.root, bg="#1a1a2e")
+        center.pack(expand=True)
+        self.label_name = tk.Label(
+            center, text="点击开始",
+            font=(CALLIGRAPHY[0], 130, "bold"),
+            fg="#FFD700", bg="#1a1a2e", cursor="hand2"
+        )
+        self.label_name.pack(padx=40)
+        self.label_name.bind("<Button-1>", lambda e: self.toggle_roll())
 
-/* ========== 万花筒色 ========== */
-const COLORS = [
-  "#ff4081","#ffeb3b","#00e5ff","#76ff03",
-  "#e040fb","#ff6e40","#18ffff","#ffff00",
-  "#f50057","#00ffa0","#651fff","#ffd740"
-];
+        # 剩余
+        bottom = tk.Frame(self.root, bg="#1a1a2e")
+        bottom.pack(pady=10)
+        self.label_remain = tk.Label(
+            bottom, text="", font=("Microsoft YaHei", 24),
+            fg="white", bg="#1a1a2e"
+        )
+        self.label_remain.pack()
 
-/* ========== 初始化 ========== */
-updateDisplay();
-resetIdle();
-document.addEventListener("mousemove", resetIdle);
-document.addEventListener("keydown", resetIdle);
-document.addEventListener("click", resetIdle);
+        # 底部按钮
+        btn_frame = tk.Frame(self.root, bg="#1a1a2e")
+        btn_frame.pack(pady=20)
+        tk.Button(btn_frame, text="开始 / 停止", command=self.toggle_roll,
+                  font=("Microsoft YaHei", 20), width=12, bg="#2196f3", fg="white"
+                  ).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="重置", command=self.reset_class,
+                  font=("Microsoft YaHei", 20), width=10, bg="#ff9800", fg="white"
+                  ).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="换班 (Esc)", command=self.switch_class,
+                  font=("Microsoft YaHei", 20), width=12, bg="#4caf50", fg="white"
+                  ).pack(side=tk.LEFT, padx=10)
 
-/* ========== 核心函数 ========== */
-function updateDisplay() {
-  classLabel.textContent = currentClass;
-  remainLabel.textContent = `剩余 ${remainingNames.length}/${originalNames.length}`;
-  if (!isRolling && nameLabel.dataset.picked !== "1") {
-    nameLabel.textContent = "点击开始";
-    resetGoldStyle();
-  }
-}
+    def bind_events(self):
+        self.root.bind("<space>", lambda e: self.toggle_roll())
+        self.root.bind("<Escape>", lambda e: self.switch_class())
+        self.root.bind("<Double-1>", lambda e: self.toggle_fullscreen())
+        self.root.bind("<Motion>", self.reset_idle)
+        self.root.bind("<Key>", self.reset_idle)
+        self.root.bind("<Button-1>", self.reset_idle)
 
-function resetGoldStyle() {
-  nameLabel.style.background = "linear-gradient(135deg, #FFD700 0%, #FFA500 50%, #FF8C00 100%)";
-  nameLabel.style.webkitBackgroundClip = "text";
-  nameLabel.style.webkitTextFillColor = "transparent";
-  nameLabel.style.filter = `
-    drop-shadow(0 2px 0 #B8860B)
-    drop-shadow(0 4px 0 #8B6508)
-    drop-shadow(0 6px 8px rgba(0,0,0,0.6))
-  `;
-}
+    # -------- 班级管理 --------
+    def refresh_class(self):
+        self.class_keys = list(self.classes.keys())
+        if self.current_idx >= len(self.class_keys):
+            self.current_idx = 0
+        if self.class_keys:
+            self.current_class = self.class_keys[self.current_idx]
+            self.original_names = self.classes[self.current_class][:]
+        else:
+            self.current_class = ""
+            self.original_names = []
+        self.remaining_names = self.original_names[:]
+        self.save_data()
+        self.update_display()
 
-function setKaleidoscopeColor() {
-  const c = COLORS[Math.floor(Math.random() * COLORS.length)];
-  nameLabel.style.background = "none";
-  nameLabel.style.webkitTextFillColor = c;
-  nameLabel.style.filter = "none";
-  nameLabel.style.color = c;
-}
+    def add_class(self):
+        self.open_text_dialog(
+            "新建班级", "输入新班级名称：", "",
+            on_ok=lambda val: self._do_add_class(val)
+        )
 
-function toggleRoll() {
-  if (remainingNames.length === 0) return;
+    def _do_add_class(self, name):
+        name = (name or "").strip()
+        if not name:
+            return
+        if name in self.classes:
+            self.flash("班级已存在")
+            return
+        self.classes[name] = []
+        self.current_idx = len(self.classes) - 1
+        self.is_rolling = False
+        self.last_picked = None
+        self.refresh_class()
+        # 新建后直接打开编辑名单
+        self.edit_names()
 
-  if (isRolling) {
-    stopRoll();
-  } else {
-    startRoll();
-  }
-}
+    def remove_class(self):
+        if len(self.class_keys) <= 1:
+            self.flash("至少保留一个班级")
+            return
+        self.open_text_dialog(
+            "删除班级",
+            f"确定删除班级「{self.current_class}」？\n\n输入 yes 确认：",
+            "",
+            on_ok=lambda val: self._do_remove(val)
+        )
 
-function startRoll() {
-  isRolling = true;
-  startTime = Date.now();
-  nameLabel.dataset.picked = "0";
-  rollTick();
-  setTimeout(stopRoll, 3000); // 3秒自动停
-}
+    def _do_remove(self, val):
+        if (val or "").strip().lower() != "yes":
+            return
+        del self.classes[self.current_class]
+        self.current_idx = 0
+        self.is_rolling = False
+        self.last_picked = None
+        self.refresh_class()
 
-function rollTick() {
-  if (!isRolling) return;
+    def edit_names(self):
+        current = "\n".join(self.classes.get(self.current_class, []))
+        self.open_text_dialog(
+            f"编辑名单 - {self.current_class}",
+            "每行一个名字：",
+            current,
+            big=True,
+            on_ok=lambda val: self._do_save_names(val)
+        )
 
-  const elapsed = Date.now() - startTime;
-  const name = remainingNames[Math.floor(Math.random() * remainingNames.length)];
-  nameLabel.textContent = name;
-  setKaleidoscopeColor();
+    def _do_save_names(self, text):
+        names = [n.strip() for n in (text or "").split("\n") if n.strip()]
+        self.classes[self.current_class] = names
+        self.is_rolling = False
+        self.last_picked = None
+        self.refresh_class()
+        self.flash(f"已保存 {len(names)} 人")
 
-  let delay = 80;
-  if (elapsed > 2000) {
-    const ratio = Math.min((elapsed - 2000) / 1000, 1);
-    delay = 80 + ratio * 220;
-  }
+    # -------- 通用弹窗 --------
+    def open_text_dialog(self, title, prompt, default, on_ok, big=False):
+        win = tk.Toplevel(self.root)
+        win.title(title)
+        win.grab_set()
+        win.configure(bg="#1a1a2e")
+        try:
+            force_topmost(ctypes.c_void_p(win.winfo_id()))
+        except Exception:
+            pass
+        tk.Label(win, text=prompt, font=("Microsoft YaHei", 13),
+                 fg="white", bg="#1a1a2e", justify=tk.LEFT).pack(padx=15, pady=10)
 
-  timer = setTimeout(rollTick, delay);
-}
+        if big:
+            widget = tk.Text(win, font=("Microsoft YaHei", 14),
+                             width=30, height=14, wrap=tk.WORD)
+        else:
+            widget = tk.Entry(win, font=("Microsoft YaHei", 14), width=30)
+        widget.pack(padx=15, pady=5)
+        widget.insert("1.0" if big else 0, default)
 
-function stopRoll() {
-  if (!isRolling) return;
-  isRolling = false;
-  clearTimeout(timer);
+        def submit():
+            val = widget.get("1.0", tk.END).strip() if big else widget.get().strip()
+            win.destroy()
+            on_ok(val)
 
-  const idx = Math.floor(Math.random() * remainingNames.length);
-  const finalName = remainingNames.splice(idx, 1)[0];
-  nameLabel.textContent = finalName;
-  nameLabel.dataset.picked = "1";
-  resetGoldStyle();
-  updateDisplay();
-}
+        tk.Button(win, text="确定", command=submit,
+                  font=("Microsoft YaHei", 13), bg="#2196f3", fg="white",
+                  width=10).pack(pady=12)
+        widget.focus_set()
 
-function switchClass() {
-  currentIdx = (currentIdx + 1) % classKeys.length;
-  currentClass = classKeys[currentIdx];
-  originalNames = [...CLASSES[currentClass]];
-  remainingNames = [...originalNames];
-  nameLabel.dataset.picked = "0";
-  clearTimeout(timer);
-  isRolling = false;
-  nameLabel.textContent = "已换班";
+    def flash(self, msg):
+        self.label_name.config(text=msg, fg="#FFD700")
+        self.last_picked = None
+        self.update_display()
+
+    # -------- 显示 --------
+    def _set_gold_3d(self, text):
+        self.label_name.config(
+            text=text, fg="#FFD700", bg="#1a1a2e",
+            font=(CALLIGRAPHY[0], 140, "bold"),
+            relief="ridge", borderwidth=6, highlightthickness=0,
+        )
+
+    def _clear_3d(self):
+        self.label_name.config(relief="flat", borderwidth=0)
+
+    def update_display(self):
+        self.label_class.config(text=self.current_class)
+        self.label_remain.config(
+            text=f"剩余 {len(self.remaining_names)}/{len(self.original_names)}"
+        )
+        if not self.is_rolling and not self.last_picked:
+            self._clear_3d()
+            self.label_name.config(font=(CALLIGRAPHY[0], 130, "bold"))
+            if len(self.remaining_names) > 0:
+                self.label_name.config(text="点击开始", fg="#FFD700")
+            else:
+                self.label_name.config(text="已抽完", fg="#FFD700")
+
+    # -------- 滚动 / 停止 --------
+    def toggle_roll(self):
+        if len(self.remaining_names) == 0:
+            self.flash("名单为空，请编辑名单")
+            return
+        if self.is_rolling:
+            self.stop_roll()
+        else:
+            self.start_roll()
+
+    def start_roll(self):
+        self.last_picked = None
+        self._clear_3d()
+        self.label_name.config(font=(CALLIGRAPHY[0], 130, "bold"))
+        self.is_rolling = True
+        self.start_time = self.root.tk.call('clock', 'milliseconds')
+        self.color_idx = 0
+        self.roll_tick()
+        self.root.after(self.auto_stop_ms, self.stop_roll)
+        self.update_display()
+
+    def roll_tick(self):
+        if not self.is_rolling:
+            return
+        now = self.root.tk.call('clock', 'milliseconds')
+        elapsed = now - self.start_time
+
+        color = COLORS[self.color_idx % len(COLORS)]
+        self.color_idx += 1
+        self.label_name.config(
+            text=random.choice(self.remaining_names),
+            fg=color, bg="#1a1a2e",
+            font=(CALLIGRAPHY[0], 130, "bold"),
+        )
+
+        if elapsed < self.slow_start_ms:
+            delay = 80
+        else:
+            ratio = min((elapsed - self.slow_start_ms) /
+                        (self.auto_stop_ms - self.slow_start_ms), 1)
+            delay = int(80 + ratio * 220)
+        self.timer = self.root.after(delay, self.roll_tick)
+
+    def stop_roll(self):
+        if not self.is_rolling and self.last_picked:
+            return
+        self.is_rolling = False
+        if self.timer:
+            try:
+                self.root.after_cancel(self.timer)
+            except Exception:
+                pass
+        if self.remaining_names:
+            final = random.choice(self.remaining_names)
+            self.remaining_names.remove(final)
+            self.last_picked = final
+            self._set_gold_3d(final)
+        else:
+            self.last_picked = None
+            self._clear_3d()
+            self.label_name.config(text="已抽完", fg="#FFD700")
+        self.update_display()
+
+    def switch_class(self):
+        if not self.class_keys:
+            return
+        if self.timer:
+            try:
+                self.root.after_cancel(self.timer)
+            except Exception:
+                pass
+        self.current_idx = (self.current_idx + 1) % len(self.class_keys)
+        self.current_class = self.class_keys[self.current_idx]
+        self.original_names = self.classes[self.current_class][:]
+        self.remaining_names = self.original_names[:]
+        self.is_rolling = False
+        self.last_picked = None
+        self.label_class.config(text=self.current_class)
+        self._clear_3d()
+        self.label_name.config(font=(CALLIGRAPHY[0], 130, "bold"))
+        self.label_name.config(text="已换班", fg="#FFD700")
+        self.update_display()
+        self.root.update_idletasks()
+        try:
+            force_topmost(ctypes.c_void_p(self.root.winfo_id()))
+        except Exception:
+            pass
+
+    def reset_class(self):
+        self.remaining_names = self.original_names[:]
+        self.is_rolling = False
+        self.last_picked = None
+        if self.timer:
+            try:
+                self.root.after_cancel(self.timer)
+            except Exception:
+                pass
+        self._clear_3d()
+        self.label_name.config(font=(CALLIGRAPHY[0], 130, "bold"))
+        self.update_display()
+
+    def toggle_fullscreen(self):
+        self.root.attributes('-fullscreen',
+                             not self.root.attributes('-fullscreen'))
+
+    # -------- 空闲透明 --------
+    def reset_idle(self, event=None):
+        self.idle_seconds = 0
+        self.root.attributes('-alpha', self.alpha_normal)
+        try:
+            force_topmost(ctypes.c_void_p(self.root.winfo_id()))
+        except Exception:
+            pass
+
+    def start_idle_timer(self):
+        def tick():
+            while True:
+                self.root.after(1000, self._tick_idle)
+                time.sleep(1)
+        threading.Thread(target=tick, daemon=True).start()
+
+    def _tick_idle(self):
+        self.idle_seconds += 1
+        try:
+            force_topmost(ctypes.c_void_p(self.root.winfo_id()))
+        except Exception:
+            pass
+        if self.idle_seconds >= self.idle_limit:
+            self.root.attributes('-alpha', self.alpha_dim)
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    # 尝试加载行草字体（Windows 自带 STXingkai，找不到会自动降级）
+    App(root)
+    root.mainloop()
