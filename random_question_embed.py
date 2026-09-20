@@ -23,28 +23,35 @@ def force_topmost(hwnd):
 class App:
     def __init__(self, root):
         self.root = root
-        self.root.title("💪下一位～～就你啦～～～👉")
+        self.root.title(" →下一位～～就係你～～～↗")
         self.root.attributes('-fullscreen', True)
         self.root.configure(bg="#1a1a2e")
 
-        # 强制置顶（Windows API）
         hwnd = ctypes.c_void_p(self.root.winfo_id())
         force_topmost(hwnd)
 
-        # 透明度控制
+        # 透明度控制：70% 透明 = 保留 30% 不透明度
         self.alpha_normal = 1.0
-        self.alpha_dim = 0.5
+        self.alpha_dim = 0.3
         self.idle_seconds = 0
-        self.idle_limit = 20  # 10秒无操作变半透明
+        self.idle_limit = 20
         self.idle_timer_running = False
 
         # 自动停止参数
-        self.auto_stop_ms = 3000   # 总滚动3秒
-        self.slow_start_ms = 2000  # 2秒后减速
+        self.auto_stop_ms = 3000
+        self.slow_start_ms = 2000
         self.timer = None
         self.is_rolling = False
         self.last_picked = None
         self.start_time = 0
+
+        # 万花筒色系（滚动时每帧轮换）
+        self.kaleidoscope = [
+            "#ff4081", "#ffeb3b", "#00e5ff", "#76ff03",
+            "#e040fb", "#ff6e40", "#18ffff", "#ffff00",
+            "#f50057", "#00ffa0", "#651fff", "#ffd740",
+        ]
+        self.color_idx = 0
 
         # 读取班级名单
         self.classes = {}
@@ -83,10 +90,12 @@ class App:
         center = tk.Frame(self.root, bg="#1a1a2e")
         center.pack(expand=True)
         self.label_name = tk.Label(
-            center, text="按空格", font=("微软雅黑", 120, "bold"),
-            fg="gold", bg="#1a1a2e"
+            center, text="点击开始", font=("微软雅黑", 120, "bold"),
+            fg="gold", bg="#1a1a2e", cursor="hand2"
         )
         self.label_name.pack()
+        # 👆 点击名字区域 = 开始/停止
+        self.label_name.bind("<Button-1>", lambda e: self.toggle_roll())
 
         bottom = tk.Frame(self.root, bg="#1a1a2e")
         bottom.pack(pady=20)
@@ -98,21 +107,12 @@ class App:
 
         btn_frame = tk.Frame(self.root, bg="#1a1a2e")
         btn_frame.pack(pady=30)
-
-        tk.Button(
-            btn_frame, text="开始/停止", command=self.toggle_roll,
-            font=("微软雅黑", 20), width=10, bg="#2196f3", fg="white"
-        ).pack(side=tk.LEFT, padx=10)
-
-        tk.Button(
-            btn_frame, text="重置", command=self.reset,
-            font=("微软雅黑", 20), width=10, bg="#ff9800", fg="white"
-        ).pack(side=tk.LEFT, padx=10)
-
-        tk.Button(
-            btn_frame, text="换班", command=self.switch_class,
-            font=("微软雅黑", 20), width=10, bg="#4caf50", fg="white"
-        ).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="开始/停止", command=self.toggle_roll,
+                  font=("微软雅黑", 20), width=10, bg="#2196f3", fg="white").pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="重置", command=self.reset,
+                  font=("微软雅黑", 20), width=10, bg="#ff9800", fg="white").pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="换班", command=self.switch_class,
+                  font=("微软雅黑", 20), width=10, bg="#4caf50", fg="white").pack(side=tk.LEFT, padx=10)
 
     def bind_events(self):
         self.root.bind("<space>", lambda e: self.toggle_roll())
@@ -125,7 +125,6 @@ class App:
     def reset_idle(self, event=None):
         self.idle_seconds = 0
         self.root.attributes('-alpha', self.alpha_normal)
-        # 唤醒时刷新置顶
         hwnd = ctypes.c_void_p(self.root.winfo_id())
         force_topmost(hwnd)
 
@@ -140,9 +139,24 @@ class App:
     def _tick_idle(self):
         self.idle_seconds += 1
         hwnd = ctypes.c_void_p(self.root.winfo_id())
-        force_topmost(hwnd)  # 持续保置顶
+        force_topmost(hwnd)
         if self.idle_seconds >= self.idle_limit:
             self.root.attributes('-alpha', self.alpha_dim)
+
+    def _set_gold_3d(self, text):
+        """金色 3D 立体效果"""
+        self.label_name.config(
+            text=text,
+            fg="#FFD700",
+            bg="#1a1a2e",
+            font=("微软雅黑", 130, "bold"),
+            relief="ridge",
+            borderwidth=6,
+            highlightthickness=0,
+        )
+
+    def _clear_3d(self):
+        self.label_name.config(relief="flat", borderwidth=0)
 
     def update_display(self):
         self.label_class.config(text=self.current_class)
@@ -150,8 +164,10 @@ class App:
             text=f"剩余 {len(self.remaining_names)}/{len(self.original_names)}"
         )
         if not self.is_rolling and not self.last_picked:
+            self._clear_3d()
+            self.label_name.config(font=("微软雅黑", 120, "bold"))
             if len(self.remaining_names) > 0:
-                self.label_name.config(text="按空格", fg="gold")
+                self.label_name.config(text="点击开始", fg="gold")
             else:
                 self.label_name.config(text="已抽完", fg="gold")
 
@@ -160,17 +176,22 @@ class App:
             return
 
         if self.is_rolling:
+            # 停止 → 金色 3D 定格
             self.root.after_cancel(self.timer)
             final = random.choice(self.remaining_names)
             self.remaining_names.remove(final)
             self.last_picked = final
-            self.label_name.config(text=final, fg="gold")
+            self._clear_3d()
+            self._set_gold_3d(final)
             self.is_rolling = False
         else:
+            # 开始 → 万花筒彩色滚动
             self.last_picked = None
+            self._clear_3d()
+            self.label_name.config(font=("微软雅黑", 120, "bold"))
             self.is_rolling = True
             self.start_time = self.root.tk.call('clock', 'milliseconds')
-            self.label_name.config(fg="#ff4081")
+            self.color_idx = 0
             self.roll_tick()
             self.root.after(self.auto_stop_ms, self.auto_stop)
 
@@ -182,8 +203,12 @@ class App:
         now = self.root.tk.call('clock', 'milliseconds')
         elapsed = now - self.start_time
 
+        # 万花筒：每帧轮换颜色
+        color = self.kaleidoscope[self.color_idx % len(self.kaleidoscope)]
+        self.color_idx += 1
         self.label_name.config(
-            text=random.choice(self.remaining_names), fg="#ff4081"
+            text=random.choice(self.remaining_names),
+            fg=color, bg="#1a1a2e",
         )
 
         if elapsed < self.slow_start_ms:
@@ -201,7 +226,8 @@ class App:
             final = random.choice(self.remaining_names)
             self.remaining_names.remove(final)
             self.last_picked = final
-            self.label_name.config(text=final, fg="gold")
+            self._clear_3d()
+            self._set_gold_3d(final)
             self.is_rolling = False
             self.update_display()
 
@@ -220,11 +246,12 @@ class App:
         self.last_picked = None
 
         self.label_class.config(text=self.current_class)
+        self._clear_3d()
+        self.label_name.config(font=("微软雅黑", 120, "bold"))
         self.label_name.config(text="已换班", fg="gold")
         self.update_display()
         self.root.update_idletasks()
 
-        # 换班后刷新置顶
         hwnd = ctypes.c_void_p(self.root.winfo_id())
         force_topmost(hwnd)
 
@@ -234,6 +261,8 @@ class App:
         self.last_picked = None
         if self.timer:
             self.root.after_cancel(self.timer)
+        self._clear_3d()
+        self.label_name.config(font=("微软雅黑", 120, "bold"))
         self.update_display()
 
 
