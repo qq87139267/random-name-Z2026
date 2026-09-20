@@ -1,272 +1,243 @@
-import tkinter as tk
-import random
-import os
-import ctypes
-import threading
-import time
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title> 💪 →下一位～～就係你～～～👉↗</title>
+<style>
+/* ========== 全局 ========== */
+* { margin: 0; padding: 0; box-sizing: border-box; }
 
-# ========== Windows 强制置顶 ==========
-user32 = ctypes.WinDLL('user32')
-HWND_TOPMOST = -1
-SWP_NOMOVE = 0x0002
-SWP_NOSIZE = 0x0001
-SWP_SHOWWINDOW = 0x0040
+body {
+  background: #1a1a2e;
+  color: white;
+  font-family: "Microsoft YaHei", sans-serif;
+  height: 100vh;
+  overflow: hidden;
+  user-select: none;
+  transition: opacity 0.8s;
+}
 
-def force_topmost(hwnd):
-    user32.SetWindowPos(
-        hwnd, HWND_TOPMOST,
-        0, 0, 0, 0,
-        SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW
-    )
+body.dim { opacity: 0.3; }
 
-# ========== 主程序 ==========
-class App:
-    def __init__(self, root):
-        self.root = root
-        self.root.title(" →下一位～～就係你～～～↗")
-        self.root.attributes('-fullscreen', True)
-        self.root.configure(bg="#1a1a2e")
+/* ========== 顶部班级 ========== */
+.header {
+  text-align: center;
+  padding: 20px 0 10px;
+  font-size: 42px;
+  font-weight: bold;
+  color: #00d4ff;
+  letter-spacing: 4px;
+}
 
-        hwnd = ctypes.c_void_p(self.root.winfo_id())
-        force_topmost(hwnd)
+/* ========== 名字区域 ========== */
+.center {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 60vh;
+}
 
-        # 透明度控制：70% 透明 = 保留 30% 不透明度
-        self.alpha_normal = 1.0
-        self.alpha_dim = 0.3
-        self.idle_seconds = 0
-        self.idle_limit = 20
-        self.idle_timer_running = False
+.name {
+  font-family:
+    "Xingkai SC", "STXingkai", "Xingkai TC",
+    "KaiTi", "KaiTi_GB2312", "FZXingKai-Medium",
+    "LiSu", "Microsoft YaHei", serif;
+  font-size: 140px;
+  font-weight: bold;
+  cursor: pointer;
+  padding: 20px 40px;
+  border-radius: 20px;
+  transition: transform 0.08s;
+  text-align: center;
 
-        # 自动停止参数
-        self.auto_stop_ms = 3000
-        self.slow_start_ms = 2000
-        self.timer = None
-        self.is_rolling = False
-        self.last_picked = None
-        self.start_time = 0
+  /* 默认金色 */
+  background: linear-gradient(135deg, #FFD700 0%, #FFA500 50%, #FF8C00 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter:
+    drop-shadow(0 2px 0 #B8860B)
+    drop-shadow(0 4px 0 #8B6508)
+    drop-shadow(0 6px 8px rgba(0,0,0,0.6));
+}
 
-        # 万花筒色系（滚动时每帧轮换）
-        self.kaleidoscope = [
-            "#ff4081", "#ffeb3b", "#00e5ff", "#76ff03",
-            "#e040fb", "#ff6e40", "#18ffff", "#ffff00",
-            "#f50057", "#00ffa0", "#651fff", "#ffd740",
-        ]
-        self.color_idx = 0
+.name:active { transform: scale(0.97); }
 
-        # 读取班级名单
-        self.classes = {}
-        self.class_keys = []
-        for cls in ["426", "427", "428"]:
-            fname = f"class{cls}.txt"
-            if os.path.exists(fname):
-                with open(fname, "r", encoding="utf-8") as f:
-                    names = [n.strip() for n in f.readlines() if n.strip()]
-                    if names:
-                        self.classes[f"{cls}班"] = names
-        self.class_keys = list(self.classes.keys())
-        if not self.class_keys:
-            self.class_keys = ["无名单"]
-            self.classes["无名单"] = ["测试"]
+/* ========== 底部信息 ========== */
+.footer {
+  position: absolute;
+  bottom: 30px;
+  width: 100%;
+  text-align: center;
+  font-size: 26px;
+  color: #ccc;
+}
 
-        self.current_idx = 0
-        self.current_class = self.class_keys[self.current_idx]
-        self.original_names = self.classes[self.current_class].copy()
-        self.remaining_names = self.original_names.copy()
+/* ========== 按钮栏 ========== */
+.buttons {
+  position: absolute;
+  bottom: 80px;
+  width: 100%;
+  text-align: center;
+}
 
-        self.build_ui()
-        self.bind_events()
-        self.update_display()
-        self.start_idle_timer()
+.buttons button {
+  font-size: 22px;
+  padding: 12px 30px;
+  margin: 0 10px;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  color: white;
+}
 
-    def build_ui(self):
-        top = tk.Frame(self.root, bg="#1a1a2e")
-        top.pack(pady=20)
-        self.label_class = tk.Label(
-            top, text="", font=("微软雅黑", 40, "bold"),
-            fg="#00d4ff", bg="#1a1a2e"
-        )
-        self.label_class.pack()
+.btn-start { background: #2196f3; }
+.btn-reset { background: #ff9800; }
+.btn-switch { background: #4caf50; }
+</style>
+</head>
 
-        center = tk.Frame(self.root, bg="#1a1a2e")
-        center.pack(expand=True)
-        self.label_name = tk.Label(
-            center, text="点击开始", font=("微软雅黑", 120, "bold"),
-            fg="gold", bg="#1a1a2e", cursor="hand2"
-        )
-        self.label_name.pack()
-        # 👆 点击名字区域 = 开始/停止
-        self.label_name.bind("<Button-1>", lambda e: self.toggle_roll())
+<body>
+<div class="header" id="classLabel">426班</div>
 
-        bottom = tk.Frame(self.root, bg="#1a1a2e")
-        bottom.pack(pady=20)
-        self.label_remain = tk.Label(
-            bottom, text="", font=("微软雅黑", 24),
-            fg="white", bg="#1a1a2e"
-        )
-        self.label_remain.pack()
+<div class="center">
+  <div class="name" id="nameLabel">点击开始</div>
+</div>
 
-        btn_frame = tk.Frame(self.root, bg="#1a1a2e")
-        btn_frame.pack(pady=30)
-        tk.Button(btn_frame, text="开始/停止", command=self.toggle_roll,
-                  font=("微软雅黑", 20), width=10, bg="#2196f3", fg="white").pack(side=tk.LEFT, padx=10)
-        tk.Button(btn_frame, text="重置", command=self.reset,
-                  font=("微软雅黑", 20), width=10, bg="#ff9800", fg="white").pack(side=tk.LEFT, padx=10)
-        tk.Button(btn_frame, text="换班", command=self.switch_class,
-                  font=("微软雅黑", 20), width=10, bg="#4caf50", fg="white").pack(side=tk.LEFT, padx=10)
+<div class="buttons">
+  <button class="btn-start" onclick="toggleRoll()">开始 / 停止</button>
+  <button class="btn-reset" onclick="resetClass()">重置</button>
+  <button class="btn-switch" onclick="switchClass()">换班（Esc）</button>
+</div>
 
-    def bind_events(self):
-        self.root.bind("<space>", lambda e: self.toggle_roll())
-        self.root.bind("<Escape>", lambda e: self.switch_class())
-        self.root.bind("<Double-1>", lambda e: self.root.attributes('-fullscreen', False))
-        self.root.bind("<Motion>", self.reset_idle)
-        self.root.bind("<Key>", self.reset_idle)
-        self.root.bind("<Button-1>", self.reset_idle)
+<div class="footer" id="remainLabel">剩余 0/0</div>
 
-    def reset_idle(self, event=None):
-        self.idle_seconds = 0
-        self.root.attributes('-alpha', self.alpha_normal)
-        hwnd = ctypes.c_void_p(self.root.winfo_id())
-        force_topmost(hwnd)
+<script>
+/* ========== 名单配置（直接改这里） ========== */
+const CLASSES = {
+  "426班": [
+    "蔡家乐","吴莹莹","廖梓良","张三","李四","王五"
+  ],
+  "428班": [
+    "赵六","孙七","周八","吴九","郑十"
+  ]
+};
 
-    def start_idle_timer(self):
-        def tick():
-            while True:
-                self.root.after(1000, self._tick_idle)
-                time.sleep(1)
-        t = threading.Thread(target=tick, daemon=True)
-        t.start()
+/* ========== 状态 ========== */
+let classKeys = Object.keys(CLASSES);
+let currentIdx = 0;
+let currentClass = classKeys[currentIdx];
+let originalNames = [...CLASSES[currentClass]];
+let remainingNames = [...originalNames];
 
-    def _tick_idle(self):
-        self.idle_seconds += 1
-        hwnd = ctypes.c_void_p(self.root.winfo_id())
-        force_topmost(hwnd)
-        if self.idle_seconds >= self.idle_limit:
-            self.root.attributes('-alpha', self.alpha_dim)
+let isRolling = false;
+let timer = null;
+let startTime = 0;
+let idleTimer = null;
+let idleSeconds = 0;
+const IDLE_LIMIT = 20;
 
-    def _set_gold_3d(self, text):
-        """金色 3D 立体效果"""
-        self.label_name.config(
-            text=text,
-            fg="#FFD700",
-            bg="#1a1a2e",
-            font=("微软雅黑", 130, "bold"),
-            relief="ridge",
-            borderwidth=6,
-            highlightthickness=0,
-        )
+/* ========== DOM ========== */
+const nameLabel = document.getElementById("nameLabel");
+const classLabel = document.getElementById("classLabel");
+const remainLabel = document.getElementById("remainLabel");
 
-    def _clear_3d(self):
-        self.label_name.config(relief="flat", borderwidth=0)
+/* ========== 万花筒色 ========== */
+const COLORS = [
+  "#ff4081","#ffeb3b","#00e5ff","#76ff03",
+  "#e040fb","#ff6e40","#18ffff","#ffff00",
+  "#f50057","#00ffa0","#651fff","#ffd740"
+];
 
-    def update_display(self):
-        self.label_class.config(text=self.current_class)
-        self.label_remain.config(
-            text=f"剩余 {len(self.remaining_names)}/{len(self.original_names)}"
-        )
-        if not self.is_rolling and not self.last_picked:
-            self._clear_3d()
-            self.label_name.config(font=("微软雅黑", 120, "bold"))
-            if len(self.remaining_names) > 0:
-                self.label_name.config(text="点击开始", fg="gold")
-            else:
-                self.label_name.config(text="已抽完", fg="gold")
+/* ========== 初始化 ========== */
+updateDisplay();
+resetIdle();
+document.addEventListener("mousemove", resetIdle);
+document.addEventListener("keydown", resetIdle);
+document.addEventListener("click", resetIdle);
 
-    def toggle_roll(self):
-        if len(self.remaining_names) == 0:
-            return
+/* ========== 核心函数 ========== */
+function updateDisplay() {
+  classLabel.textContent = currentClass;
+  remainLabel.textContent = `剩余 ${remainingNames.length}/${originalNames.length}`;
+  if (!isRolling && nameLabel.dataset.picked !== "1") {
+    nameLabel.textContent = "点击开始";
+    resetGoldStyle();
+  }
+}
 
-        if self.is_rolling:
-            # 停止 → 金色 3D 定格
-            self.root.after_cancel(self.timer)
-            final = random.choice(self.remaining_names)
-            self.remaining_names.remove(final)
-            self.last_picked = final
-            self._clear_3d()
-            self._set_gold_3d(final)
-            self.is_rolling = False
-        else:
-            # 开始 → 万花筒彩色滚动
-            self.last_picked = None
-            self._clear_3d()
-            self.label_name.config(font=("微软雅黑", 120, "bold"))
-            self.is_rolling = True
-            self.start_time = self.root.tk.call('clock', 'milliseconds')
-            self.color_idx = 0
-            self.roll_tick()
-            self.root.after(self.auto_stop_ms, self.auto_stop)
+function resetGoldStyle() {
+  nameLabel.style.background = "linear-gradient(135deg, #FFD700 0%, #FFA500 50%, #FF8C00 100%)";
+  nameLabel.style.webkitBackgroundClip = "text";
+  nameLabel.style.webkitTextFillColor = "transparent";
+  nameLabel.style.filter = `
+    drop-shadow(0 2px 0 #B8860B)
+    drop-shadow(0 4px 0 #8B6508)
+    drop-shadow(0 6px 8px rgba(0,0,0,0.6))
+  `;
+}
 
-        self.update_display()
+function setKaleidoscopeColor() {
+  const c = COLORS[Math.floor(Math.random() * COLORS.length)];
+  nameLabel.style.background = "none";
+  nameLabel.style.webkitTextFillColor = c;
+  nameLabel.style.filter = "none";
+  nameLabel.style.color = c;
+}
 
-    def roll_tick(self):
-        if not self.is_rolling:
-            return
-        now = self.root.tk.call('clock', 'milliseconds')
-        elapsed = now - self.start_time
+function toggleRoll() {
+  if (remainingNames.length === 0) return;
 
-        # 万花筒：每帧轮换颜色
-        color = self.kaleidoscope[self.color_idx % len(self.kaleidoscope)]
-        self.color_idx += 1
-        self.label_name.config(
-            text=random.choice(self.remaining_names),
-            fg=color, bg="#1a1a2e",
-        )
+  if (isRolling) {
+    stopRoll();
+  } else {
+    startRoll();
+  }
+}
 
-        if elapsed < self.slow_start_ms:
-            delay = 80
-        else:
-            ratio = min(
-                (elapsed - self.slow_start_ms) /
-                (self.auto_stop_ms - self.slow_start_ms), 1
-            )
-            delay = int(80 + ratio * 220)
-        self.timer = self.root.after(delay, self.roll_tick)
+function startRoll() {
+  isRolling = true;
+  startTime = Date.now();
+  nameLabel.dataset.picked = "0";
+  rollTick();
+  setTimeout(stopRoll, 3000); // 3秒自动停
+}
 
-    def auto_stop(self):
-        if self.is_rolling:
-            final = random.choice(self.remaining_names)
-            self.remaining_names.remove(final)
-            self.last_picked = final
-            self._clear_3d()
-            self._set_gold_3d(final)
-            self.is_rolling = False
-            self.update_display()
+function rollTick() {
+  if (!isRolling) return;
 
-    def switch_class(self):
-        if not self.class_keys:
-            return
-        if self.timer:
-            self.root.after_cancel(self.timer)
+  const elapsed = Date.now() - startTime;
+  const name = remainingNames[Math.floor(Math.random() * remainingNames.length)];
+  nameLabel.textContent = name;
+  setKaleidoscopeColor();
 
-        self.current_idx = (self.current_idx + 1) % len(self.class_keys)
-        self.current_class = self.class_keys[self.current_idx]
-        self.original_names = self.classes[self.current_class].copy()
-        self.remaining_names = self.original_names.copy()
+  let delay = 80;
+  if (elapsed > 2000) {
+    const ratio = Math.min((elapsed - 2000) / 1000, 1);
+    delay = 80 + ratio * 220;
+  }
 
-        self.is_rolling = False
-        self.last_picked = None
+  timer = setTimeout(rollTick, delay);
+}
 
-        self.label_class.config(text=self.current_class)
-        self._clear_3d()
-        self.label_name.config(font=("微软雅黑", 120, "bold"))
-        self.label_name.config(text="已换班", fg="gold")
-        self.update_display()
-        self.root.update_idletasks()
+function stopRoll() {
+  if (!isRolling) return;
+  isRolling = false;
+  clearTimeout(timer);
 
-        hwnd = ctypes.c_void_p(self.root.winfo_id())
-        force_topmost(hwnd)
+  const idx = Math.floor(Math.random() * remainingNames.length);
+  const finalName = remainingNames.splice(idx, 1)[0];
+  nameLabel.textContent = finalName;
+  nameLabel.dataset.picked = "1";
+  resetGoldStyle();
+  updateDisplay();
+}
 
-    def reset(self):
-        self.remaining_names = self.original_names.copy()
-        self.is_rolling = False
-        self.last_picked = None
-        if self.timer:
-            self.root.after_cancel(self.timer)
-        self._clear_3d()
-        self.label_name.config(font=("微软雅黑", 120, "bold"))
-        self.update_display()
-
-
-if __name__ == "__main__":
-    root = tk.Tk()
-    app = App(root)
-    root.mainloop()
+function switchClass() {
+  currentIdx = (currentIdx + 1) % classKeys.length;
+  currentClass = classKeys[currentIdx];
+  originalNames = [...CLASSES[currentClass]];
+  remainingNames = [...originalNames];
+  nameLabel.dataset.picked = "0";
+  clearTimeout(timer);
+  isRolling = false;
+  nameLabel.textContent = "已换班";
