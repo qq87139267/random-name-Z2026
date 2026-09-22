@@ -6,7 +6,7 @@ from ctypes import windll
 HAS_WIN_API = True
 NORMAL_ALPHA = 1.0
 TRANS_ALPHA = 0.2  # 80%透明
-IDLE_LIMIT = 20
+IDLE_LIMIT = 10
 DATA_FILE = "rollcall_data.json"
 
 class RollCallApp:
