@@ -2,20 +2,14 @@ import tkinter as tk
 from tkinter import messagebox
 import json, os, time, random
 from ctypes import windll
-
-try:
-    from pygame import mixer
-    mixer.init()
-    HAS_PYGAME = True
-except Exception:
-    HAS_PYGAME = False
+import winsound
 
 HAS_WIN_API = True
 NORMAL_ALPHA = 1.0
 TRANS_ALPHA = 0.2
 IDLE_LIMIT = 10
 DATA_FILE = "rollcall_data.json"
-APPLAUSE_FILE = "applause.mp3"
+APPLAUSE_FILE = "applause.wav"
 
 class RollCallApp:
     def __init__(self, root):
@@ -80,13 +74,11 @@ class RollCallApp:
         """播放抽中音效"""
         if not self.sound_on:
             return
-        if HAS_PYGAME and os.path.exists(APPLAUSE_FILE):
+        if os.path.exists(APPLAUSE_FILE):
             try:
-                mixer.music.load(APPLAUSE_FILE)
-                mixer.music.play()
-                return
-            except Exception:
-                pass
+                winsound.PlaySound(APPLAUSE_FILE, winsound.SND_FILENAME | winsound.SND_ASYNC)
+            except Exception as e:
+                print(f"播放失败: {e}")
 
     def build_ui(self):
         top = tk.Frame(self.root, bg="#0a0f1c")
@@ -186,7 +178,6 @@ class RollCallApp:
             self.remaining.remove(name)
             self.drawn.append(name)
             self.name_label.config(text=name, fg="#ffd700")
-            # 抽中后播放音效
             self.root.after(100, self.play_applause)
         self.toggle_btn.config(text="开始 (空格)", bg="#27ae60")
         self.update_class_ui()
