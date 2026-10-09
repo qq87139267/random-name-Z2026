@@ -3,16 +3,30 @@ from tkinter import messagebox
 import json, os, time, random
 from ctypes import windll
 
+try:
+    import winsound
+    HAS_WINSOUND = True
+except Exception:
+    HAS_WINSOUND = False
+
+try:
+    from pygame import mixer
+    mixer.init()
+    HAS_PYGAME = True
+except Exception:
+    HAS_PYGAME = False
+
 HAS_WIN_API = True
 NORMAL_ALPHA = 1.0
 TRANS_ALPHA = 0.2   # 80%透明
 IDLE_LIMIT = 8      # 8秒无操作变透明
 DATA_FILE = "rollcall_data.json"
+APPLAUSE_FILE = "applause.mp3"
 
 class RollCallApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("💪下一位~~就係你~~~☝️↗")
+        self.root.title("🍌 下一位~~就你~~~ ✨")
         self.root.geometry("440x360")
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#0a0f1c")
@@ -32,6 +46,7 @@ class RollCallApp:
         self.drawn = []
         self.running = False
         self.last_active = time.time()
+        self.sound_on = True   # 掌声开关
         self.load_data()
 
         self.font_class = ("STXingkai", 26, "bold")
@@ -67,29 +82,43 @@ class RollCallApp:
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(self.data, f, ensure_ascii=False, indent=2)
 
+    def play_applause(self):
+        """播放掌声：优先自定义音频，否则用系统音效"""
+        if not self.sound_on:
+            return
+        # 优先播放同目录的 applause.mp3
+        if HAS_PYGAME and os.path.exists(APPLAUSE_FILE):
+            try:
+                mixer.music.load(APPLAUSE_FILE)
+                mixer.music.play()
+                return
+            except Exception:
+                pass
+        # 回退：Windows 系统掌声音效（Asterisk）
+        if HAS_WINSOUND:
+            try:
+                winsound.MessageBeep(winsound.MB_ICONASTERISK)
+            except Exception:
+                pass
+
     def build_ui(self):
-        # 顶部：班级名 + 齿轮按钮
         top = tk.Frame(self.root, bg="#0a0f1c")
         top.pack(fill="x", padx=8, pady=(6, 2))
 
         self.class_label = tk.Label(top, text="", font=self.font_class, fg="#00ffff", bg="#0a0f1c")
         self.class_label.pack(side="left", padx=4)
 
-        # 齿轮按钮
         self.gear_btn = tk.Button(top, text="⚙", font=("微软雅黑", 18), bg="#0a0f1c", fg="#666666",
                                   bd=0, activebackground="#0a0f1c", activeforeground="#aaaaaa",
                                   cursor="hand2", command=self.pop_menu)
         self.gear_btn.pack(side="right", padx=4)
 
-        # 中间：名字
         self.name_label = tk.Label(self.root, text="点击开始", font=self.font_name, fg="#ffd700", bg="#0a0f1c")
         self.name_label.pack(expand=True, fill="both", pady=8)
 
-        # 剩余提示
         self.remain_label = tk.Label(self.root, text="", font=("微软雅黑", 11), fg="#888888", bg="#0a0f1c")
         self.remain_label.pack(pady=2)
 
-        # 底部：双按钮
         btn_frame = tk.Frame(self.root, bg="#0a0f1c")
         btn_frame.pack(fill="x", pady=(6, 12), padx=40)
 
@@ -100,7 +129,6 @@ class RollCallApp:
         self.reset_btn.pack(side="left", expand=True, fill="x", padx=5)
 
     def pop_menu(self):
-        """点击齿轮弹出管理菜单"""
         self.wake_up()
         menu = tk.Menu(self.root, tearoff=0, font=("微软雅黑", 11),
                        bg="#1a1a2e", fg="white", activebackground="#3498db", activeforeground="white")
@@ -111,8 +139,13 @@ class RollCallApp:
         menu.add_command(label="⏷ 切换班级", command=self.switch_class)
         menu.add_separator()
         menu.add_command(label="📋 已抽列表", command=self.show_drawn)
-        # 在齿轮按钮下方弹出
+        menu.add_separator()
+        sound_label = "🔊 掌声：开" if self.sound_on else "🔈 掌声：关"
+        menu.add_command(label=sound_label, command=self.toggle_sound)
         menu.post(self.gear_btn.winfo_rootx(), self.gear_btn.winfo_rooty() + 30)
+
+    def toggle_sound(self):
+        self.sound_on = not self.sound_on
 
     def update_class_ui(self):
         if not self.classes:
@@ -166,6 +199,8 @@ class RollCallApp:
             self.remaining.remove(name)
             self.drawn.append(name)
             self.name_label.config(text=name, fg="#ffd700")
+            # 抽中后播放掌声
+            self.root.after(100, self.play_applause)
         self.toggle_btn.config(text="开始 (空格)", bg="#27ae60")
         self.update_class_ui()
         self.wake_up()
@@ -251,7 +286,6 @@ class RollCallApp:
         top.bind("<Return>", lambda e: save())
 
     def show_drawn(self):
-        """显示已抽过的人"""
         cls = self.classes[self.current_idx]
         top = tk.Toplevel(self.root)
         top.title(f"已抽列表 - {cls}")
