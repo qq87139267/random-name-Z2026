@@ -8,7 +8,6 @@ NORMAL_ALPHA = 1.0
 TRANS_ALPHA = 0.2   # 80%透明
 IDLE_LIMIT = 8      # 8秒无操作变透明
 DATA_FILE = "rollcall_data.json"
-HOVER_W = 30        # 顶部触发悬停的高度(px)
 
 class RollCallApp:
     def __init__(self, root):
@@ -33,7 +32,6 @@ class RollCallApp:
         self.drawn = []
         self.running = False
         self.last_active = time.time()
-        self._hide_job = None
         self.load_data()
 
         self.font_class = ("STXingkai", 26, "bold")
@@ -49,9 +47,7 @@ class RollCallApp:
         self.name_label.bind("<Button-1>", self.toggle_roll)
         self.root.bind("<space>", self.toggle_roll)
         self.root.bind("<Configure>", self.on_resize)
-        self.root.bind("<Motion>", self.on_motion)
-        # 全局鼠标位置轮询，检测离开顶部区域
-        self.root.after(150, self._poll_mouse)
+        self.root.bind("<Motion>", self.wake_up)
 
     def load_data(self):
         if os.path.exists(DATA_FILE):
@@ -72,25 +68,18 @@ class RollCallApp:
             json.dump(self.data, f, ensure_ascii=False, indent=2)
 
     def build_ui(self):
-        # 顶部区域：放班级名 + 管理按钮（默认隐藏）
-        self.top = tk.Frame(self.root, bg="#0a0f1c")
-        self.top.pack(fill="x", padx=8, pady=(6, 2))
+        # 顶部：班级名 + 齿轮按钮
+        top = tk.Frame(self.root, bg="#0a0f1c")
+        top.pack(fill="x", padx=8, pady=(6, 2))
 
-        self.class_label = tk.Label(self.top, text="", font=self.font_class, fg="#00ffff", bg="#0a0f1c")
+        self.class_label = tk.Label(top, text="", font=self.font_class, fg="#00ffff", bg="#0a0f1c")
         self.class_label.pack(side="left", padx=4)
 
-        # 管理按钮区（默认隐藏）
-        self.mgr = tk.Frame(self.top, bg="#0a0f1c")
-        tk.Button(self.mgr, text="＋ 新建班级", bg="#27ae60", fg="white", font=("微软雅黑", 9, "bold"),
-                  padx=6, pady=2, command=self.add_class).pack(side="left", padx=2)
-        tk.Button(self.mgr, text="✎ 编辑名单", bg="#e67e22", fg="white", font=("微软雅黑", 9, "bold"),
-                  padx=6, pady=2, command=self.edit_names).pack(side="left", padx=2)
-        tk.Button(self.mgr, text="🗑 删除班级", bg="#e74c3c", fg="white", font=("微软雅黑", 9, "bold"),
-                  padx=6, pady=2, command=self.del_class).pack(side="left", padx=2)
-        tk.Button(self.mgr, text="⏷ 切换", bg="#3498db", fg="white", font=("微软雅黑", 9, "bold"),
-                  padx=6, pady=2, command=self.switch_class).pack(side="left", padx=2)
-        # 默认隐藏
-        self._mgr_visible = False
+        # 齿轮按钮
+        self.gear_btn = tk.Button(top, text="⚙", font=("微软雅黑", 18), bg="#0a0f1c", fg="#666666",
+                                  bd=0, activebackground="#0a0f1c", activeforeground="#aaaaaa",
+                                  cursor="hand2", command=self.pop_menu)
+        self.gear_btn.pack(side="right", padx=4)
 
         # 中间：名字
         self.name_label = tk.Label(self.root, text="点击开始", font=self.font_name, fg="#ffd700", bg="#0a0f1c")
@@ -110,48 +99,20 @@ class RollCallApp:
         self.reset_btn = tk.Button(btn_frame, text="重置", font=self.font_btn, bg="#e67e22", fg="white", command=self.reset_remaining)
         self.reset_btn.pack(side="left", expand=True, fill="x", padx=5)
 
-    # ===== 悬停显示/隐藏管理按钮 =====
-    def _show_mgr(self):
-        if not self._mgr_visible:
-            self.mgr.pack(side="right")
-            self._mgr_visible = True
-
-    def _hide_mgr(self):
-        if self._mgr_visible:
-            self.mgr.pack_forget()
-            self._mgr_visible = False
-
-    def on_motion(self, e=None):
+    def pop_menu(self):
+        """点击齿轮弹出管理菜单"""
         self.wake_up()
-        # 鼠标在顶部区域则显示管理按钮
-        if e and hasattr(e, "y") and e.y <= HOVER_W:
-            self._show_mgr()
-            # 安排隐藏
-            if self._hide_job:
-                self.root.after_cancel(self._hide_job)
-            self._hide_job = self.root.after(1500, self._hide_mgr)
-        elif e and hasattr(e, "y") and e.y > HOVER_W + 40:
-            # 鼠标离开顶部区域一段时间后隐藏
-            if self._hide_job:
-                self.root.after_cancel(self._hide_job)
-            self._hide_job = self.root.after(600, self._hide_mgr)
-
-    def _poll_mouse(self):
-        try:
-            x = self.root.winfo_pointerx() - self.root.winfo_rootx()
-            y = self.root.winfo_pointery() - self.root.winfo_rooty()
-            if 0 <= y <= HOVER_W and 0 <= x <= self.root.winfo_width():
-                self._show_mgr()
-                if self._hide_job:
-                    self.root.after_cancel(self._hide_job)
-                self._hide_job = self.root.after(1200, self._hide_mgr)
-            elif y > HOVER_W + 60:
-                if self._hide_job:
-                    self.root.after_cancel(self._hide_job)
-                self._hide_job = self.root.after(500, self._hide_mgr)
-        except Exception:
-            pass
-        self.root.after(200, self._poll_mouse)
+        menu = tk.Menu(self.root, tearoff=0, font=("微软雅黑", 11),
+                       bg="#1a1a2e", fg="white", activebackground="#3498db", activeforeground="white")
+        menu.add_command(label="＋ 新建班级", command=self.add_class)
+        menu.add_command(label="✎ 编辑名单", command=self.edit_names)
+        menu.add_command(label="🗑 删除班级", command=self.del_class)
+        menu.add_separator()
+        menu.add_command(label="⏷ 切换班级", command=self.switch_class)
+        menu.add_separator()
+        menu.add_command(label="📋 已抽列表", command=self.show_drawn)
+        # 在齿轮按钮下方弹出
+        menu.post(self.gear_btn.winfo_rootx(), self.gear_btn.winfo_rooty() + 30)
 
     def update_class_ui(self):
         if not self.classes:
@@ -209,7 +170,7 @@ class RollCallApp:
         self.update_class_ui()
         self.wake_up()
 
-    # ===== 班级管理功能 =====
+    # ===== 班级管理 =====
     def add_class(self):
         top = tk.Toplevel(self.root)
         top.title("新建班级")
@@ -288,6 +249,23 @@ class RollCallApp:
         tk.Button(btn_row, text="取消", font=("微软雅黑", 10), bg="#555555", fg="white", command=top.destroy).pack(side="left", expand=True, padx=4)
         top.bind("<Control-Return>", lambda e: save())
         top.bind("<Return>", lambda e: save())
+
+    def show_drawn(self):
+        """显示已抽过的人"""
+        cls = self.classes[self.current_idx]
+        top = tk.Toplevel(self.root)
+        top.title(f"已抽列表 - {cls}")
+        top.geometry("300x400")
+        top.configure(bg="#0a0f1c")
+        tk.Label(top, text=f"已抽 {len(self.drawn)} 人：", font=("微软雅黑", 11, "bold"), fg="#ffd700", bg="#0a0f1c").pack(pady=10)
+        txt = tk.Text(top, font=("微软雅黑", 12), bg="#1a1a2e", fg="white", wrap="none")
+        txt.pack(expand=True, fill="both", padx=12, pady=(0, 12))
+        if self.drawn:
+            for i, name in enumerate(self.drawn, 1):
+                txt.insert("end", f"{i}. {name}\n")
+        else:
+            txt.insert("end", "（暂无已抽记录）")
+        txt.config(state="disabled")
 
     def reset_remaining(self):
         if not self.classes:
