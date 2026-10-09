@@ -5,19 +5,18 @@ from ctypes import windll
 
 HAS_WIN_API = True
 NORMAL_ALPHA = 1.0
-TRANS_ALPHA = 0.2  # 80%透明
-IDLE_LIMIT = 8    # 8秒无操作变透明
+TRANS_ALPHA = 0.2   # 80%透明
+IDLE_LIMIT = 8      # 8秒无操作变透明
 DATA_FILE = "rollcall_data.json"
 
 class RollCallApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("🍌 下一位~~就你~~~ ✨")
-        self.root.geometry("400x300")
+        self.root.title("💪下一位~~就係你~~~☝️↗")
+        self.root.geometry("440x360")
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#0a0f1c")
 
-        # 置顶+透明层
         if HAS_WIN_API:
             try:
                 hwnd = windll.user32.GetParent(self.root.winfo_id())
@@ -30,13 +29,12 @@ class RollCallApp:
         self.classes = []
         self.current_idx = 0
         self.remaining = []
-        self.drawn = []       # 记录已抽名单（备用）
+        self.drawn = []
         self.running = False
         self.last_active = time.time()
         self.load_data()
 
-        # 字体适配
-        self.font_class = ("STXingkai", 28, "bold")
+        self.font_class = ("STXingkai", 26, "bold")
         self.font_name = ("STXingkai", 72, "bold")
         self.font_btn = ("微软雅黑", 11, "bold")
 
@@ -45,11 +43,9 @@ class RollCallApp:
         self.reset_remaining()
         self.tick()
 
-        # 主界面点击：名字区域+空白区都能触发开始/停止
         self.root.bind("<Button-1>", self.on_click_root)
         self.name_label.bind("<Button-1>", self.toggle_roll)
         self.root.bind("<space>", self.toggle_roll)
-        # 已移除 Esc 换班绑定
         self.root.bind("<Configure>", self.on_resize)
         self.root.bind("<Motion>", self.wake_up)
 
@@ -72,15 +68,36 @@ class RollCallApp:
             json.dump(self.data, f, ensure_ascii=False, indent=2)
 
     def build_ui(self):
-        self.class_label = tk.Label(self.root, text="", font=self.font_class, fg="#00ffff", bg="#0a0f1c")
-        self.class_label.pack(pady=(30, 5))
+        # 顶部：班级名 + 管理按钮（始终可见，紧凑）
+        top = tk.Frame(self.root, bg="#0a0f1c")
+        top.pack(fill="x", padx=8, pady=(6, 2))
 
+        self.class_label = tk.Label(top, text="", font=self.font_class, fg="#00ffff", bg="#0a0f1c")
+        self.class_label.pack(side="left", padx=4)
+
+        mgr = tk.Frame(top, bg="#0a0f1c")
+        mgr.pack(side="right")
+
+        tk.Button(mgr, text="＋ 新建班级", bg="#27ae60", fg="white", font=("微软雅黑", 9, "bold"),
+                  padx=6, pady=2, command=self.add_class).pack(side="left", padx=2)
+        tk.Button(mgr, text="✎ 编辑名单", bg="#e67e22", fg="white", font=("微软雅黑", 9, "bold"),
+                  padx=6, pady=2, command=self.edit_names).pack(side="left", padx=2)
+        tk.Button(mgr, text="🗑 删除班级", bg="#e74c3c", fg="white", font=("微软雅黑", 9, "bold"),
+                  padx=6, pady=2, command=self.del_class).pack(side="left", padx=2)
+        tk.Button(mgr, text="⏷ 切换", bg="#3498db", fg="white", font=("微软雅黑", 9, "bold"),
+                  padx=6, pady=2, command=self.switch_class).pack(side="left", padx=2)
+
+        # 中间：名字
         self.name_label = tk.Label(self.root, text="点击开始", font=self.font_name, fg="#ffd700", bg="#0a0f1c")
-        self.name_label.pack(expand=True, fill="both", pady=10)
+        self.name_label.pack(expand=True, fill="both", pady=8)
 
-        # 底部按钮区：仅保留 开始/停止 + 重置
+        # 剩余提示
+        self.remain_label = tk.Label(self.root, text="", font=("微软雅黑", 11), fg="#888888", bg="#0a0f1c")
+        self.remain_label.pack(pady=2)
+
+        # 底部：双按钮
         btn_frame = tk.Frame(self.root, bg="#0a0f1c")
-        btn_frame.pack(fill="x", pady=15, padx=40)
+        btn_frame.pack(fill="x", pady=(6, 12), padx=40)
 
         self.toggle_btn = tk.Button(btn_frame, text="开始 (空格)", font=self.font_btn, bg="#27ae60", fg="white", command=self.toggle_roll)
         self.toggle_btn.pack(side="left", expand=True, fill="x", padx=5)
@@ -89,12 +106,15 @@ class RollCallApp:
         self.reset_btn.pack(side="left", expand=True, fill="x", padx=5)
 
     def update_class_ui(self):
+        if not self.classes:
+            return
         cls = self.classes[self.current_idx]
-        self.class_label.config(text=f"【{cls}】 共{len(self.data.get(cls, []))}人")
+        total = len(self.data.get(cls, []))
+        self.class_label.config(text=f"【{cls}】")
+        self.remain_label.config(text=f"共 {total} 人    剩余 {len(self.remaining)} 人")
 
     def on_click_root(self, e):
-        # 防止点按钮时重复触发
-        if e.widget != self.root and e.widget.master != self.root:
+        if e.widget != self.root:
             return
         self.toggle_roll()
 
@@ -108,30 +128,139 @@ class RollCallApp:
     def start_roll(self):
         if not self.remaining:
             self.reset_remaining()
+        if not self.remaining:
+            self.name_label.config(text="名单为空", fg="#ff4444")
+            return
         self.running = True
         self.toggle_btn.config(text="停止", bg="#c0392b")
+        self.start_time = time.time()
         self.roll_tick()
-
-    def stop_roll(self):
-        self.running = False
-        if self.remaining:
-            name = self.remaining.pop(0)
-            self.drawn.append(name)
-        else:
-            name = "抽完啦"
-        self.name_label.config(text=name, fg="#ffd700")
-        self.toggle_btn.config(text="开始 (空格)", bg="#27ae60")
-        self.wake_up()
 
     def roll_tick(self):
         if not self.running:
             return
+        t = time.time() - self.start_time
+        if t >= 3:
+            self.stop_roll()
+            return
         if self.remaining:
             name = random.choice(self.remaining)
-            self.name_label.config(text=name, fg="#ffffff")
-        self.root.after(80, self.roll_tick)
+            colors = ["#ffd700", "#ff4d4d", "#4dff88", "#4dabff", "#bf4dff", "#ff8c4d", "#4dffff"]
+            self.name_label.config(text=name, fg=colors[int(t * 10) % len(colors)])
+        delay = 60 if t < 2 else 130
+        self.root.after(delay, self.roll_tick)
+
+    def stop_roll(self):
+        self.running = False
+        if self.remaining:
+            name = random.choice(self.remaining)
+            self.remaining.remove(name)
+            self.drawn.append(name)
+            self.name_label.config(text=name, fg="#ffd700")
+        self.toggle_btn.config(text="开始 (空格)", bg="#27ae60")
+        self.update_class_ui()
+        self.wake_up()
+
+    # ===== 班级管理功能 =====
+    def add_class(self):
+        """新建一个班级"""
+        top = tk.Toplevel(self.root)
+        top.title("新建班级")
+        top.geometry("300x160")
+        top.grab_set()
+        top.configure(bg="#0a0f1c")
+
+        tk.Label(top, text="班级名称：", font=("微软雅黑", 11), fg="white", bg="#0a0f1c").pack(padx=12, pady=(16, 4))
+        ent = tk.Entry(top, font=("微软雅黑", 12))
+        ent.pack(padx=12, fill="x")
+        ent.focus()
+
+        def ok():
+            name = ent.get().strip()
+            if not name:
+                messagebox.showwarning("提示", "班级名称不能为空", parent=top)
+                return
+            if name in self.data:
+                messagebox.showwarning("提示", "该班级已存在", parent=top)
+                return
+            self.data[name] = []
+            self.classes.append(name)
+            self.current_idx = len(self.classes) - 1
+            self.save_data()
+            self.reset_remaining()
+            top.destroy()
+
+        tk.Button(top, text="确定", font=("微软雅黑", 11, "bold"), bg="#27ae60", fg="white",
+                  command=ok, padx=20).pack(pady=12)
+        top.bind("<Return>", lambda e: ok())
+
+    def del_class(self):
+        """删除当前班级"""
+        if len(self.classes) <= 1:
+            messagebox.showinfo("提示", "至少保留一个班级", parent=self.root)
+            return
+        cls = self.classes[self.current_idx]
+        if not messagebox.askyesno("确认", f"确定删除班级「{cls}」？\n该班级名单将一并删除。", parent=self.root):
+            return
+        del self.data[cls]
+        self.classes.remove(cls)
+        self.current_idx = 0
+        self.save_data()
+        self.reset_remaining()
+
+    def switch_class(self):
+        """切换到下一个班级"""
+        if len(self.classes) <= 1:
+            self.name_label.config(text="仅一个班")
+            self.root.after(800, lambda: self.name_label.config(text="点击开始", fg="#ffd700"))
+            return
+        self.current_idx = (self.current_idx + 1) % len(self.classes)
+        self.reset_remaining()
+        self.wake_up()
+
+    def edit_names(self):
+        """编辑当前班级的名单"""
+        cls = self.classes[self.current_idx]
+        top = tk.Toplevel(self.root)
+        top.title(f"编辑名单 - {cls}")
+        top.geometry("360x460")
+        top.grab_set()
+        top.configure(bg="#0a0f1c")
+
+        tk.Label(top, text="每行写一个名字：", font=("微软雅黑", 10), fg="#cccccc", bg="#0a0f1c").pack(anchor="w", padx=12, pady=(12, 4))
+
+        txt = tk.Text(top, font=("微软雅黑", 12), wrap="none")
+        txt.pack(expand=True, fill="both", padx=12)
+        txt.insert("1.0", "\n".join(self.data.get(cls, [])))
+        txt.focus()
+
+        def save():
+            names = [l.strip() for l in txt.get("1.0", "end").splitlines() if l.strip()]
+            # 去重但保序
+            seen, uniq = set(), []
+            for n in names:
+                if n not in seen:
+                    seen.add(n)
+                    uniq.append(n)
+            self.data[cls] = uniq
+            self.save_data()
+            self.reset_remaining()
+            top.destroy()
+
+        btn_row = tk.Frame(top, bg="#0a0f1c")
+        btn_row.pack(fill="x", padx=12, pady=10)
+
+        tk.Button(btn_row, text="保存 (Ctrl+回车)", font=("微软雅黑", 10, "bold"), bg="#27ae60", fg="white",
+                  command=save).pack(side="left", expand=True, padx=4)
+        tk.Button(btn_row, text="取消", font=("微软雅黑", 10), bg="#555555", fg="white",
+                  command=top.destroy).pack(side="left", expand=True, padx=4)
+
+        top.bind("<Control-Return>", lambda e: save())
+        top.bind("<Return>", lambda e: save())
 
     def reset_remaining(self):
+        if not self.classes:
+            return
         cls = self.classes[self.current_idx]
         self.remaining = self.data.get(cls, [])[:]
         self.drawn = []
