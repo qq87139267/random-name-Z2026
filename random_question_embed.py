@@ -4,12 +4,6 @@ import json, os, time, random
 from ctypes import windll
 
 try:
-    import winsound
-    HAS_WINSOUND = True
-except Exception:
-    HAS_WINSOUND = False
-
-try:
     from pygame import mixer
     mixer.init()
     HAS_PYGAME = True
@@ -18,15 +12,15 @@ except Exception:
 
 HAS_WIN_API = True
 NORMAL_ALPHA = 1.0
-TRANS_ALPHA = 0.2   # 80%透明
-IDLE_LIMIT = 8      # 8秒无操作变透明
+TRANS_ALPHA = 0.2
+IDLE_LIMIT = 10
 DATA_FILE = "rollcall_data.json"
 APPLAUSE_FILE = "applause.mp3"
 
 class RollCallApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("🍌 下一位~~就你~~~ ✨")
+        self.root.title("💪下一位~~就係你~~~☝️↗")
         self.root.geometry("440x360")
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#0a0f1c")
@@ -46,7 +40,7 @@ class RollCallApp:
         self.drawn = []
         self.running = False
         self.last_active = time.time()
-        self.sound_on = True   # 掌声开关
+        self.sound_on = True
         self.load_data()
 
         self.font_class = ("STXingkai", 26, "bold")
@@ -83,21 +77,14 @@ class RollCallApp:
             json.dump(self.data, f, ensure_ascii=False, indent=2)
 
     def play_applause(self):
-        """播放掌声：优先自定义音频，否则用系统音效"""
+        """播放抽中音效"""
         if not self.sound_on:
             return
-        # 优先播放同目录的 applause.mp3
         if HAS_PYGAME and os.path.exists(APPLAUSE_FILE):
             try:
                 mixer.music.load(APPLAUSE_FILE)
                 mixer.music.play()
                 return
-            except Exception:
-                pass
-        # 回退：Windows 系统掌声音效（Asterisk）
-        if HAS_WINSOUND:
-            try:
-                winsound.MessageBeep(winsound.MB_ICONASTERISK)
             except Exception:
                 pass
 
@@ -140,7 +127,7 @@ class RollCallApp:
         menu.add_separator()
         menu.add_command(label="📋 已抽列表", command=self.show_drawn)
         menu.add_separator()
-        sound_label = "🔊 掌声：开" if self.sound_on else "🔈 掌声：关"
+        sound_label = "🔊 音效：开" if self.sound_on else "🔈 音效：关"
         menu.add_command(label=sound_label, command=self.toggle_sound)
         menu.post(self.gear_btn.winfo_rootx(), self.gear_btn.winfo_rooty() + 30)
 
@@ -199,13 +186,12 @@ class RollCallApp:
             self.remaining.remove(name)
             self.drawn.append(name)
             self.name_label.config(text=name, fg="#ffd700")
-            # 抽中后播放掌声
+            # 抽中后播放音效
             self.root.after(100, self.play_applause)
         self.toggle_btn.config(text="开始 (空格)", bg="#27ae60")
         self.update_class_ui()
         self.wake_up()
 
-    # ===== 班级管理 =====
     def add_class(self):
         top = tk.Toplevel(self.root)
         top.title("新建班级")
