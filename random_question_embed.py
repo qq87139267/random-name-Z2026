@@ -8,6 +8,7 @@ NORMAL_ALPHA = 1.0
 TRANS_ALPHA = 0.2   # 80%透明
 IDLE_LIMIT = 8      # 8秒无操作变透明
 DATA_FILE = "rollcall_data.json"
+HOVER_W = 30        # 顶部触发悬停的高度(px)
 
 class RollCallApp:
     def __init__(self, root):
@@ -32,6 +33,7 @@ class RollCallApp:
         self.drawn = []
         self.running = False
         self.last_active = time.time()
+        self._hide_job = None
         self.load_data()
 
         self.font_class = ("STXingkai", 26, "bold")
@@ -47,7 +49,9 @@ class RollCallApp:
         self.name_label.bind("<Button-1>", self.toggle_roll)
         self.root.bind("<space>", self.toggle_roll)
         self.root.bind("<Configure>", self.on_resize)
-        self.root.bind("<Motion>", self.wake_up)
+        self.root.bind("<Motion>", self.on_motion)
+        # 全局鼠标位置轮询，检测离开顶部区域
+        self.root.after(150, self._poll_mouse)
 
     def load_data(self):
         if os.path.exists(DATA_FILE):
@@ -68,24 +72,25 @@ class RollCallApp:
             json.dump(self.data, f, ensure_ascii=False, indent=2)
 
     def build_ui(self):
-        # 顶部：班级名 + 管理按钮（始终可见，紧凑）
-        top = tk.Frame(self.root, bg="#0a0f1c")
-        top.pack(fill="x", padx=8, pady=(6, 2))
+        # 顶部区域：放班级名 + 管理按钮（默认隐藏）
+        self.top = tk.Frame(self.root, bg="#0a0f1c")
+        self.top.pack(fill="x", padx=8, pady=(6, 2))
 
-        self.class_label = tk.Label(top, text="", font=self.font_class, fg="#00ffff", bg="#0a0f1c")
+        self.class_label = tk.Label(self.top, text="", font=self.font_class, fg="#00ffff", bg="#0a0f1c")
         self.class_label.pack(side="left", padx=4)
 
-        mgr = tk.Frame(top, bg="#0a0f1c")
-        mgr.pack(side="right")
-
-        tk.Button(mgr, text="＋ 新建班级", bg="#27ae60", fg="white", font=("微软雅黑", 9, "bold"),
+        # 管理按钮区（默认隐藏）
+        self.mgr = tk.Frame(self.top, bg="#0a0f1c")
+        tk.Button(self.mgr, text="＋ 新建班级", bg="#27ae60", fg="white", font=("微软雅黑", 9, "bold"),
                   padx=6, pady=2, command=self.add_class).pack(side="left", padx=2)
-        tk.Button(mgr, text="✎ 编辑名单", bg="#e67e22", fg="white", font=("微软雅黑", 9, "bold"),
+        tk.Button(self.mgr, text="✎ 编辑名单", bg="#e67e22", fg="white", font=("微软雅黑", 9, "bold"),
                   padx=6, pady=2, command=self.edit_names).pack(side="left", padx=2)
-        tk.Button(mgr, text="🗑 删除班级", bg="#e74c3c", fg="white", font=("微软雅黑", 9, "bold"),
+        tk.Button(self.mgr, text="🗑 删除班级", bg="#e74c3c", fg="white", font=("微软雅黑", 9, "bold"),
                   padx=6, pady=2, command=self.del_class).pack(side="left", padx=2)
-        tk.Button(mgr, text="⏷ 切换", bg="#3498db", fg="white", font=("微软雅黑", 9, "bold"),
+        tk.Button(self.mgr, text="⏷ 切换", bg="#3498db", fg="white", font=("微软雅黑", 9, "bold"),
                   padx=6, pady=2, command=self.switch_class).pack(side="left", padx=2)
+        # 默认隐藏
+        self._mgr_visible = False
 
         # 中间：名字
         self.name_label = tk.Label(self.root, text="点击开始", font=self.font_name, fg="#ffd700", bg="#0a0f1c")
@@ -104,6 +109,49 @@ class RollCallApp:
 
         self.reset_btn = tk.Button(btn_frame, text="重置", font=self.font_btn, bg="#e67e22", fg="white", command=self.reset_remaining)
         self.reset_btn.pack(side="left", expand=True, fill="x", padx=5)
+
+    # ===== 悬停显示/隐藏管理按钮 =====
+    def _show_mgr(self):
+        if not self._mgr_visible:
+            self.mgr.pack(side="right")
+            self._mgr_visible = True
+
+    def _hide_mgr(self):
+        if self._mgr_visible:
+            self.mgr.pack_forget()
+            self._mgr_visible = False
+
+    def on_motion(self, e=None):
+        self.wake_up()
+        # 鼠标在顶部区域则显示管理按钮
+        if e and hasattr(e, "y") and e.y <= HOVER_W:
+            self._show_mgr()
+            # 安排隐藏
+            if self._hide_job:
+                self.root.after_cancel(self._hide_job)
+            self._hide_job = self.root.after(1500, self._hide_mgr)
+        elif e and hasattr(e, "y") and e.y > HOVER_W + 40:
+            # 鼠标离开顶部区域一段时间后隐藏
+            if self._hide_job:
+                self.root.after_cancel(self._hide_job)
+            self._hide_job = self.root.after(600, self._hide_mgr)
+
+    def _poll_mouse(self):
+        try:
+            x = self.root.winfo_pointerx() - self.root.winfo_rootx()
+            y = self.root.winfo_pointery() - self.root.winfo_rooty()
+            if 0 <= y <= HOVER_W and 0 <= x <= self.root.winfo_width():
+                self._show_mgr()
+                if self._hide_job:
+                    self.root.after_cancel(self._hide_job)
+                self._hide_job = self.root.after(1200, self._hide_mgr)
+            elif y > HOVER_W + 60:
+                if self._hide_job:
+                    self.root.after_cancel(self._hide_job)
+                self._hide_job = self.root.after(500, self._hide_mgr)
+        except Exception:
+            pass
+        self.root.after(200, self._poll_mouse)
 
     def update_class_ui(self):
         if not self.classes:
@@ -163,18 +211,15 @@ class RollCallApp:
 
     # ===== 班级管理功能 =====
     def add_class(self):
-        """新建一个班级"""
         top = tk.Toplevel(self.root)
         top.title("新建班级")
         top.geometry("300x160")
         top.grab_set()
         top.configure(bg="#0a0f1c")
-
         tk.Label(top, text="班级名称：", font=("微软雅黑", 11), fg="white", bg="#0a0f1c").pack(padx=12, pady=(16, 4))
         ent = tk.Entry(top, font=("微软雅黑", 12))
         ent.pack(padx=12, fill="x")
         ent.focus()
-
         def ok():
             name = ent.get().strip()
             if not name:
@@ -189,13 +234,10 @@ class RollCallApp:
             self.save_data()
             self.reset_remaining()
             top.destroy()
-
-        tk.Button(top, text="确定", font=("微软雅黑", 11, "bold"), bg="#27ae60", fg="white",
-                  command=ok, padx=20).pack(pady=12)
+        tk.Button(top, text="确定", font=("微软雅黑", 11, "bold"), bg="#27ae60", fg="white", command=ok, padx=20).pack(pady=12)
         top.bind("<Return>", lambda e: ok())
 
     def del_class(self):
-        """删除当前班级"""
         if len(self.classes) <= 1:
             messagebox.showinfo("提示", "至少保留一个班级", parent=self.root)
             return
@@ -209,7 +251,6 @@ class RollCallApp:
         self.reset_remaining()
 
     def switch_class(self):
-        """切换到下一个班级"""
         if len(self.classes) <= 1:
             self.name_label.config(text="仅一个班")
             self.root.after(800, lambda: self.name_label.config(text="点击开始", fg="#ffd700"))
@@ -219,24 +260,19 @@ class RollCallApp:
         self.wake_up()
 
     def edit_names(self):
-        """编辑当前班级的名单"""
         cls = self.classes[self.current_idx]
         top = tk.Toplevel(self.root)
         top.title(f"编辑名单 - {cls}")
         top.geometry("360x460")
         top.grab_set()
         top.configure(bg="#0a0f1c")
-
         tk.Label(top, text="每行写一个名字：", font=("微软雅黑", 10), fg="#cccccc", bg="#0a0f1c").pack(anchor="w", padx=12, pady=(12, 4))
-
         txt = tk.Text(top, font=("微软雅黑", 12), wrap="none")
         txt.pack(expand=True, fill="both", padx=12)
         txt.insert("1.0", "\n".join(self.data.get(cls, [])))
         txt.focus()
-
         def save():
             names = [l.strip() for l in txt.get("1.0", "end").splitlines() if l.strip()]
-            # 去重但保序
             seen, uniq = set(), []
             for n in names:
                 if n not in seen:
@@ -246,15 +282,10 @@ class RollCallApp:
             self.save_data()
             self.reset_remaining()
             top.destroy()
-
         btn_row = tk.Frame(top, bg="#0a0f1c")
         btn_row.pack(fill="x", padx=12, pady=10)
-
-        tk.Button(btn_row, text="保存 (Ctrl+回车)", font=("微软雅黑", 10, "bold"), bg="#27ae60", fg="white",
-                  command=save).pack(side="left", expand=True, padx=4)
-        tk.Button(btn_row, text="取消", font=("微软雅黑", 10), bg="#555555", fg="white",
-                  command=top.destroy).pack(side="left", expand=True, padx=4)
-
+        tk.Button(btn_row, text="保存 (Ctrl+回车)", font=("微软雅黑", 10, "bold"), bg="#27ae60", fg="white", command=save).pack(side="left", expand=True, padx=4)
+        tk.Button(btn_row, text="取消", font=("微软雅黑", 10), bg="#555555", fg="white", command=top.destroy).pack(side="left", expand=True, padx=4)
         top.bind("<Control-Return>", lambda e: save())
         top.bind("<Return>", lambda e: save())
 
