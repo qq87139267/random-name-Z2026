@@ -6,13 +6,13 @@ from ctypes import windll
 HAS_WIN_API = True
 NORMAL_ALPHA = 1.0
 TRANS_ALPHA = 0.2
-IDLE_LIMIT = 10
+IDLE_LIMIT = 8
 DATA_FILE = "rollcall_data.json"
 
 class RollCallApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("🍌 下一位~~就你~~~ ✨")
+        self.root.title("🍌💪下一位~~就係你~~~☝️↗ ✨")
         self.root.geometry("440x360")
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#0a0f1c")
@@ -50,6 +50,7 @@ class RollCallApp:
         self.root.bind("<Configure>", self.on_resize)
         self.root.bind("<Motion>", self.wake_up)
 
+    # ---------- 数据 ----------
     def load_data(self):
         if os.path.exists(DATA_FILE):
             try:
@@ -68,24 +69,17 @@ class RollCallApp:
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(self.data, f, ensure_ascii=False, indent=2)
 
+    # ---------- 系统默认 TTS（不强制粤语）----------
     def speak_name(self, name):
-        """PowerShell + .NET TTS 粤语播报"""
+        """PowerShell + .NET TTS 系统默认播报"""
         if not self.voice_on:
             return
-        # 粤语播报文本
         text = f"请 {name} 同学响亮回答"
         ps_cmd = (
             'Add-Type -AssemblyName System.Speech; '
             '$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; '
-            '$s.Rate = 1; '
-            '$s.Volume = 100; '
-            '$voices = $s.GetInstalledVoices(); '
-            'foreach ($v in $voices) { '
-            '  if ($v.VoiceInfo.Name -like "*Cantonese*" -or $v.VoiceInfo.Name -like "*粤*" -or $v.VoiceInfo.Culture -like "*HK*") { '
-            '    $s.SelectVoice($v.VoiceInfo.Name); break; '
-            '  } '
-            '} '
-            f'$s.Speak(\"{text}\")'
+            '$s.Rate = 1; $s.Volume = 100; '
+            f'$s.Speak("{text}")'
         )
         try:
             subprocess.Popen(
@@ -93,9 +87,10 @@ class RollCallApp:
                 stdout=subprocess.DEVNULL,
                 stderr=subprocess.DEVNULL
             )
-        except Exception as e:
-            print(f"语音播报失败: {e}")
+        except Exception:
+            pass
 
+    # ---------- 界面 ----------
     def build_ui(self):
         top = tk.Frame(self.root, bg="#0a0f1c")
         top.pack(fill="x", padx=8, pady=(6, 2))
@@ -147,7 +142,7 @@ class RollCallApp:
             return
         cls = self.classes[self.current_idx]
         total = len(self.data.get(cls, []))
-        self.class_label.config(text=f"{cls}")  # 无括号
+        self.class_label.config(text=f"{cls}")
         self.remain_label.config(text=f"共 {total} 人    剩余 {len(self.remaining)} 人")
 
     def on_click_root(self, e):
