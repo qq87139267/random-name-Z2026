@@ -1,13 +1,7 @@
 import tkinter as tk
 from tkinter import messagebox
-import json, os, time, random, threading
+import json, os, time, random, subprocess
 from ctypes import windll
-
-try:
-    import comtypes.client
-    HAS_TTS = True
-except Exception:
-    HAS_TTS = False
 
 HAS_WIN_API = True
 NORMAL_ALPHA = 1.0
@@ -18,7 +12,7 @@ DATA_FILE = "rollcall_data.json"
 class RollCallApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("💪下一位~~就係你~~~☝️↗")
+        self.root.title("🍌 下一位~~就你~~~ ✨")
         self.root.geometry("440x360")
         self.root.attributes("-topmost", True)
         self.root.configure(bg="#0a0f1c")
@@ -44,25 +38,6 @@ class RollCallApp:
         self.font_class = ("STXingkai", 26, "bold")
         self.font_name = ("STXingkai", 72, "bold")
         self.font_btn = ("微软雅黑", 11, "bold")
-
-        # TTS 引擎
-        self.tts = None
-        self.tts_voice_index = -1
-        if HAS_TTS:
-            try:
-                self.tts = comtypes.client.CreateObject("SAPI.SpVoice")
-                self.tts.Rate = 1
-                self.tts.Volume = 100
-                # 找粤语语音
-                voices = self.tts.GetVoices()
-                for i in range(voices.Count):
-                    desc = voices.Item(i).GetDescription()
-                    if "Cantonese" in desc or "粤" in desc or "Hong Kong" in desc or "Tracy" in desc or "Danny" in desc:
-                        self.tts.Voice = voices.Item(i)
-                        self.tts_voice_index = i
-                        break
-            except Exception:
-                self.tts = None
 
         self.build_ui()
         self.update_class_ui()
@@ -94,19 +69,32 @@ class RollCallApp:
             json.dump(self.data, f, ensure_ascii=False, indent=2)
 
     def speak_name(self, name):
-        """粤语播报名字"""
+        """PowerShell + .NET TTS 粤语播报"""
         if not self.voice_on:
             return
-        if not self.tts:
-            return
-        def _speak():
-            try:
-                text = f"请 {name} 同学响亮回答！"
-                self.tts.Speak(text)
-            except Exception:
-                pass
-        t = threading.Thread(target=_speak, daemon=True)
-        t.start()
+        # 粤语播报文本
+        text = f"请 {name} 同学响亮回答"
+        ps_cmd = (
+            'Add-Type -AssemblyName System.Speech; '
+            '$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; '
+            '$s.Rate = 1; '
+            '$s.Volume = 100; '
+            '$voices = $s.GetInstalledVoices(); '
+            'foreach ($v in $voices) { '
+            '  if ($v.VoiceInfo.Name -like "*Cantonese*" -or $v.VoiceInfo.Name -like "*粤*" -or $v.VoiceInfo.Culture -like "*HK*") { '
+            '    $s.SelectVoice($v.VoiceInfo.Name); break; '
+            '  } '
+            '} '
+            f'$s.Speak(\"{text}\")'
+        )
+        try:
+            subprocess.Popen(
+                ["powershell", "-WindowStyle", "Hidden", "-Command", ps_cmd],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL
+            )
+        except Exception as e:
+            print(f"语音播报失败: {e}")
 
     def build_ui(self):
         top = tk.Frame(self.root, bg="#0a0f1c")
@@ -159,8 +147,7 @@ class RollCallApp:
             return
         cls = self.classes[self.current_idx]
         total = len(self.data.get(cls, []))
-        # 去掉括号，直接显示班别
-        self.class_label.config(text=f"{cls}")
+        self.class_label.config(text=f"{cls}")  # 无括号
         self.remain_label.config(text=f"共 {total} 人    剩余 {len(self.remaining)} 人")
 
     def on_click_root(self, e):
