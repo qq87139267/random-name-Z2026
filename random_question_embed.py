@@ -1,15 +1,19 @@
 import tkinter as tk
 from tkinter import messagebox
-import json, os, time, random
+import json, os, time, random, threading
 from ctypes import windll
-import winsound
+
+try:
+    import comtypes.client
+    HAS_TTS = True
+except Exception:
+    HAS_TTS = False
 
 HAS_WIN_API = True
 NORMAL_ALPHA = 1.0
 TRANS_ALPHA = 0.2
 IDLE_LIMIT = 10
 DATA_FILE = "rollcall_data.json"
-APPLAUSE_FILE = "applause.wav"
 
 class RollCallApp:
     def __init__(self, root):
@@ -34,12 +38,31 @@ class RollCallApp:
         self.drawn = []
         self.running = False
         self.last_active = time.time()
-        self.sound_on = True
+        self.voice_on = True
         self.load_data()
 
         self.font_class = ("STXingkai", 26, "bold")
         self.font_name = ("STXingkai", 72, "bold")
         self.font_btn = ("微软雅黑", 11, "bold")
+
+        # TTS 引擎
+        self.tts = None
+        self.tts_voice_index = -1
+        if HAS_TTS:
+            try:
+                self.tts = comtypes.client.CreateObject("SAPI.SpVoice")
+                self.tts.Rate = 1
+                self.tts.Volume = 100
+                # 找粤语语音
+                voices = self.tts.GetVoices()
+                for i in range(voices.Count):
+                    desc = voices.Item(i).GetDescription()
+                    if "Cantonese" in desc or "粤" in desc or "Hong Kong" in desc or "Tracy" in desc or "Danny" in desc:
+                        self.tts.Voice = voices.Item(i)
+                        self.tts_voice_index = i
+                        break
+            except Exception:
+                self.tts = None
 
         self.build_ui()
         self.update_class_ui()
@@ -70,15 +93,20 @@ class RollCallApp:
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(self.data, f, ensure_ascii=False, indent=2)
 
-    def play_applause(self):
-        """播放抽中音效"""
-        if not self.sound_on:
+    def speak_name(self, name):
+        """粤语播报名字"""
+        if not self.voice_on:
             return
-        if os.path.exists(APPLAUSE_FILE):
+        if not self.tts:
+            return
+        def _speak():
             try:
-                winsound.PlaySound(APPLAUSE_FILE, winsound.SND_FILENAME | winsound.SND_ASYNC)
-            except Exception as e:
-                print(f"播放失败: {e}")
+                text = f"请 {name} 同学响亮回答！"
+                self.tts.Speak(text)
+            except Exception:
+                pass
+        t = threading.Thread(target=_speak, daemon=True)
+        t.start()
 
     def build_ui(self):
         top = tk.Frame(self.root, bg="#0a0f1c")
@@ -119,19 +147,20 @@ class RollCallApp:
         menu.add_separator()
         menu.add_command(label="📋 已抽列表", command=self.show_drawn)
         menu.add_separator()
-        sound_label = "🔊 音效：开" if self.sound_on else "🔈 音效：关"
-        menu.add_command(label=sound_label, command=self.toggle_sound)
+        voice_label = "🗣 语音：开" if self.voice_on else "🤐 语音：关"
+        menu.add_command(label=voice_label, command=self.toggle_voice)
         menu.post(self.gear_btn.winfo_rootx(), self.gear_btn.winfo_rooty() + 30)
 
-    def toggle_sound(self):
-        self.sound_on = not self.sound_on
+    def toggle_voice(self):
+        self.voice_on = not self.voice_on
 
     def update_class_ui(self):
         if not self.classes:
             return
         cls = self.classes[self.current_idx]
         total = len(self.data.get(cls, []))
-        self.class_label.config(text=f"【{cls}】")
+        # 去掉括号，直接显示班别
+        self.class_label.config(text=f"{cls}")
         self.remain_label.config(text=f"共 {total} 人    剩余 {len(self.remaining)} 人")
 
     def on_click_root(self, e):
@@ -178,7 +207,7 @@ class RollCallApp:
             self.remaining.remove(name)
             self.drawn.append(name)
             self.name_label.config(text=name, fg="#ffd700")
-            self.root.after(100, self.play_applause)
+            self.root.after(100, lambda: self.speak_name(name))
         self.toggle_btn.config(text="开始 (空格)", bg="#27ae60")
         self.update_class_ui()
         self.wake_up()
