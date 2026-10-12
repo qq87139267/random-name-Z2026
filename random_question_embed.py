@@ -74,7 +74,7 @@ class RollCallApp:
         """PowerShell + .NET TTS 系统默认播报"""
         if not self.voice_on:
             return
-        text = f"请 {name} 同学响亮回答"
+        text = f"请中奖的 {name} 同学响亮回答"
         ps_cmd = (
             'Add-Type -AssemblyName System.Speech; '
             '$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; '
